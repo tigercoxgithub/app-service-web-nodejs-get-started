@@ -1,7 +1,14 @@
-const http = require("http");
-const WebSocket = require("ws");
-const STREAM_SECRET = "secret";
-const STREAM_PORT = process.env.PORT || 3000;
+var fs = require("fs"),
+  http = require("http"),
+  WebSocket = require("ws");
+
+var STREAM_SECRET = "secret",
+  STREAM_PORT = process.env.PORT || 3000,
+  RECORD_STREAM = true;
+
+// --------------------------------------------------
+// WEBSOCKET SERVER
+// --------------------------------------------------
 const wss1 = new WebSocket.Server({ noServer: true });
 const wss2 = new WebSocket.Server({ noServer: true });
 
@@ -50,14 +57,40 @@ wss2.broadcast = (data) => {
   });
 };
 
+// -------------------------------------------------
+// CORS CONFIG
+// -------------------------------------------------
+const CORS = (req, res) => {
+  const headers = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "OPTIONS, POST, GET",
+    "Access-Control-Max-Age": 2592000, // 30 days
+    /** add other headers as per requirement */
+  };
+
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, headers);
+    return;
+  }
+
+  if (["GET", "POST", "PUT"].indexOf(req.method) > -1) {
+    res.writeHead(200, headers);
+    return;
+  }
+
+  res.writeHead(405, headers);
+  res.end(`${req.method} is not allowed for the request.`);
+};
+
 // --------------------------------------------------
 // HTTPS
 // --------------------------------------------------
 const streamServer = http.createServer(
   function (request, response) {
-    // Cors config
+    // Cors setup
+    CORS(request, response);
 
-    // |route|secretKey
+    // Expected route /[route]/[secret]
     var params = request.url.substr(1).split("/");
 
     if (!params || params.length !== 2) {
@@ -72,22 +105,44 @@ const streamServer = http.createServer(
       response.end();
     }
 
+    console.log(`Accepted Incoming MPEG-TS Stream from ${route.toUpperCase()}`);
     response.socket.setTimeout(0);
+
+    let recordingPathCam1 =
+      __dirname + `/recordings/cam1/` + Date.now() + ".ts";
+    let recordingPathCam2 =
+      __dirname + `/recordings/cam2/` + Date.now() + ".ts";
+
+    if (route == "cam1" && !request.socket.cam1_recording) {
+      request.socket.cam1_recording = fs.createWriteStream(recordingPathCam1);
+    } else if (route == "cam2" && !request.socket.cam2_recording) {
+      request.socket.cam2_recording = fs.createWriteStream(recordingPathCam2);
+    }
 
     request.on("data", function (data) {
       if (route == "cam1") {
+        if (RECORD_STREAM && request.socket.cam1_recording)
+          request.socket.cam1_recording.write(data, "binary");
         wss1.broadcast(data);
-		
       } else if (route == "cam2") {
+        if (RECORD_STREAM && request.socket.cam2_recording)
+          request.socket.cam2_recording.write(data, "binary");
         wss2.broadcast(data);
-		
       } else {
         response.end();
       }
     });
+
     request.on("end", function () {
-      console.log("close");
-      response.end();
+      // Close write streams from cams
+      if (request.socket.cam1_recording) {
+        console.log("Closing cam1 stream!", request.socket.cam1_recording);
+        request.socket.cam1_recording.close();
+      }
+      if (request.socket.cam2_recording) {
+        console.log("Closing cam2 stream!");
+        request.socket.cam2_recording.end();
+      }
     });
   }
 );
