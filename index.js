@@ -4,7 +4,7 @@ var fs = require("fs"),
 
 var STREAM_SECRET = "secret",
   STREAM_PORT = process.env.PORT || 3000,
-  RECORD_STREAM = true;
+  RECORD_STREAM = false;
 
 // --------------------------------------------------
 // WEBSOCKET SERVER
